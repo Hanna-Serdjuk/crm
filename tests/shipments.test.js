@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createSeed} from '../src/data/seed.js';
+import {filterShipments,metrics,validateShipment,toCSV,isShipment} from '../src/utils/shipments.js';
+const seed=createSeed();
+test('sample dataset contains 32 valid shipments with distinct IDs',()=>{assert.equal(seed.length,32);assert.equal(new Set(seed.map(s=>s.id)).size,32);assert(seed.every(isShipment));});
+test('search is trimmed, case insensitive and includes route/customer/reference',()=>{assert(filterShipments(seed,{search:'  SHANGHAI  '}).every(s=>s.origin==='Shanghai'));assert.equal(filterShipments(seed,{search:seed[0].reference}).length,1);assert.equal(filterShipments(seed,{search:'no such shipment'}).length,0);});
+test('status, mode and month filters compose',()=>{const result=filterShipments(seed,{status:'In transit',mode:'Ocean',month:'2026-10'});assert(result.length>0);assert(result.every(s=>s.status==='In transit'&&s.mode==='Ocean'&&s.created.startsWith('2026-10')));});
+test('sorting does not mutate the source and supports both directions',()=>{const snapshot=JSON.stringify(seed);const asc=filterShipments(seed,{sort:'weight',direction:'asc'});const desc=filterShipments(seed,{sort:'weight',direction:'desc'});assert.equal(asc[0].weight,Math.min(...seed.map(s=>s.weight)));assert.equal(desc[0].weight,Math.max(...seed.map(s=>s.weight)));assert.equal(JSON.stringify(seed),snapshot);});
+test('empty metrics do not divide by zero',()=>{assert.deepEqual(metrics([]),{total:0,active:0,delivered:0,delayed:0,rate:0,value:0,weight:0});});
+test('metrics match source totals and delivery share',()=>{const result=metrics(seed);assert.equal(result.active+result.delivered,result.total);assert.equal(result.value,seed.reduce((n,s)=>n+s.value,0));assert.equal(result.rate,Math.round(result.delivered/32*100));});
+test('validation rejects empty, invalid numeric and identical route fields',()=>{const result=validateShipment({...seed[0],customer:' ',weight:Infinity,value:-1,mode:'Train',origin:'Berlin',destination:' berlin ',eta:'invalid'});for(const key of ['customer','weight','value','mode','destination','eta'])assert(result[key]);});
+test('CSV quotes special characters and prevents leading spreadsheet formulas',()=>{const csv=toCSV([{...seed[0],customer:'=SUM(1,2)',reference:'A"B\nC'}]);assert(csv.includes('"\'=SUM(1,2)"'));assert(csv.includes('"A""B\nC"'));assert.equal(csv.charCodeAt(0),0xfeff);});
+test('storage validator rejects malformed shipment records',()=>{assert(!isShipment({id:'x'}));assert(!isShipment({...seed[0],weight:'100'}));assert(!isShipment({...seed[0],status:'Unknown'}));});
